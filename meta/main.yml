@@ -9,7 +9,7 @@ galaxy_info:
   min_ansible_version: "2.14"
 
   namespace: spoljarevic
-  role_name: rhel_based_hardening
+  role_name: rhel-based-hardening
 
   platforms:
     - name: EL
