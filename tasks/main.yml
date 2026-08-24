@@ -1,0 +1,131 @@
+#SPDX-License-Identifier: MIT
+---
+- name: Assert required variables are set
+  ansible.builtin.assert:
+    that:
+      - ssh_port is defined
+      - vault_user_name is defined
+      - vault_user_password is defined
+      - ssh_pubkey_path is defined
+      - ssh_pubkey_path | length > 0
+    fail_msg: >-
+      ssh_port, vault_user_name, vault_user_password and ssh_pubkey_path
+      must all be set. vault_user_name/vault_user_password are expected to
+      come from an ansible-vault encrypted user.yml (see README).
+    quiet: true
+
+- name: Set the server hostname
+  ansible.builtin.hostname:
+    name: "{{ hardening_hostname }}"
+  when: hardening_hostname | length > 0
+
+- name: Install EPEL repository (required for fail2ban on Rocky Linux/RHEL)
+  ansible.builtin.dnf:
+    name: epel-release
+    state: present
+
+- name: Install baseline hardening packages
+  ansible.builtin.dnf:
+    name: "{{ baseline_packages }}"
+    state: present
+
+- name: Enable and start chronyd (time sync, needed for accurate fail2ban bans/logs)
+  ansible.builtin.service:
+    name: chronyd
+    state: started
+    enabled: true
+
+- name: Enable and start dnf-automatic timer (unattended security updates)
+  ansible.builtin.systemd:
+    name: dnf-automatic.timer
+    state: started
+    enabled: true
+
+- name: Enable and start firewalld
+  ansible.builtin.service:
+    name: firewalld
+    state: started
+    enabled: true
+
+- name: Set firewalld default zone
+  ansible.builtin.command: "firewall-cmd --set-default-zone={{ firewalld_zone }}"
+  changed_when: false
+
+- name: Create hardened admin user with sudo (wheel) rights
+  ansible.builtin.user:
+    name: "{{ vault_user_name }}"
+    password: "{{ vault_user_password | password_hash('sha512') }}"
+    shell: "{{ hardening_user_shell }}"
+    create_home: true
+    groups: wheel
+    append: true
+    state: present
+
+- name: Deploy authorized SSH key for the hardened admin user
+  ansible.posix.authorized_key:
+    user: "{{ vault_user_name }}"
+    state: present
+    key: "{{ lookup('file', ssh_pubkey_path) }}"
+
+- name: Open required ports in firewalld
+  ansible.posix.firewalld:
+    zone: "{{ firewalld_zone }}"
+    port: "{{ item }}"
+    permanent: true
+    immediate: true
+    state: enabled
+  loop: "{{ firewall_ports }}"
+  notify: Reload firewalld
+
+- name: Allow sshd to bind to the custom SSH port under SELinux
+  community.general.seport:
+    ports: "{{ ssh_port }}"
+    proto: tcp
+    setype: ssh_port_t
+    state: present
+
+- name: Deploy fail2ban jail.local
+  ansible.builtin.copy:
+    dest: /etc/fail2ban/jail.local
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [DEFAULT]
+      bantime  = {{ fail2ban_bantime }}
+      findtime = {{ fail2ban_findtime }}
+      maxretry = {{ fail2ban_maxretry }}
+      backend  = systemd
+      ignoreip = {{ fail2ban_ignoreip }}
+
+      [sshd]
+      enabled  = true
+      port     = {{ ssh_port }}
+      filter   = sshd
+      backend  = systemd
+      maxretry = {{ fail2ban_maxretry }}
+      bantime  = {{ fail2ban_bantime }}
+      findtime = {{ fail2ban_findtime }}
+  notify: Reload fail2ban
+
+- name: Enable and start fail2ban
+  ansible.builtin.service:
+    name: fail2ban
+    state: started
+    enabled: true
+
+- name: Harden sshd_config
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: "{{ item.regexp }}"
+    line: "{{ item.line }}"
+    state: present
+    validate: /usr/sbin/sshd -t -f %s
+  loop:
+    - { regexp: "^#?Port\\s", line: "Port {{ ssh_port }}" }
+    - { regexp: "^#?PermitRootLogin\\s", line: "PermitRootLogin no" }
+    - { regexp: "^#?PasswordAuthentication\\s", line: "PasswordAuthentication no" }
+    - { regexp: "^#?PubkeyAuthentication\\s", line: "PubkeyAuthentication yes" }
+    - { regexp: "^#?ChallengeResponseAuthentication\\s", line: "ChallengeResponseAuthentication no" }
+    - { regexp: "^#?KbdInteractiveAuthentication\\s", line: "KbdInteractiveAuthentication no" }
+  notify: Reload sshd

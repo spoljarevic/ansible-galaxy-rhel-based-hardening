@@ -1,0 +1,30 @@
+#SPDX-License-Identifier: MIT
+---
+galaxy_info:
+  author: spoljarevic
+  description: Baseline security hardening for Rocky Linux / RHEL-based servers (firewalld, fail2ban, chrony, dnf-automatic, SELinux-aware SSH hardening, hardened user provisioning)
+  company: ""
+  license: MIT
+
+  min_ansible_version: "2.14"
+
+  namespace: spoljarevic
+  role_name: rhel_based_hardening
+
+  platforms:
+    - name: EL
+      versions:
+        - "8"
+        - "9"
+
+  galaxy_tags:
+    - hardening
+    - security
+    - rockylinux
+    - rhel
+    - firewalld
+    - fail2ban
+    - ssh
+    - selinux
+
+dependencies: []
