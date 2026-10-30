@@ -1,5 +1,5 @@
-rhel_based_hardening
-=====================
+rhel-based-hardening
+====================
 
 Baseline security hardening for Rocky Linux / RHEL-based servers:
 
@@ -17,6 +17,7 @@ Requirements
 ------------
 
 - Rocky Linux / RHEL 8 or 9 (or compatible), managed as root or with `become: true`.
+- The `passlib` Python library on the control node (used by `password_hash` to hash the admin password).
 - Ansible collections `ansible.posix` and `community.general` (used for the `firewalld` and SELinux `seport` modules). Install with:
 
   ```bash
@@ -95,7 +96,7 @@ Example Playbook
     ssh_pubkey_path: "~/.ssh/id_ed25519.pub"
     hardening_hostname: "web01"
   roles:
-    - spoljarevic.rhel_based_hardening
+    - spoljarevic.rhel-based-hardening
 ```
 
 License

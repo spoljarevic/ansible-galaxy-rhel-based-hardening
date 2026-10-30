@@ -1,8 +1,10 @@
-#SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: MIT
 ---
 galaxy_info:
   author: spoljarevic
-  description: Baseline security hardening for Rocky Linux / RHEL-based servers (firewalld, fail2ban, chrony, dnf-automatic, SELinux-aware SSH hardening, hardened user provisioning)
+  description: >-
+    Baseline security hardening for Rocky Linux / RHEL-based servers (firewalld, fail2ban, chrony,
+    dnf-automatic, SELinux-aware SSH hardening, hardened user provisioning)
   company: ""
   license: MIT
 

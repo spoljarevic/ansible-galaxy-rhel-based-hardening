@@ -1,0 +1,11 @@
+---
+profile: production
+
+exclude_paths:
+  - .git/
+  - .forgejo/
+
+# The role is published on Galaxy under a dashed name, which these rules reject
+skip_list:
+  - role-name
+  - schema[meta]

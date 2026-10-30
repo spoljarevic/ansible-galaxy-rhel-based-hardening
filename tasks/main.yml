@@ -1,4 +1,4 @@
-#SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: MIT
 ---
 - name: Assert required variables are set
   ansible.builtin.assert:
@@ -54,7 +54,7 @@
 - name: Create hardened admin user with sudo (wheel) rights
   ansible.builtin.user:
     name: "{{ vault_user_name }}"
-    password: "{{ vault_user_password | password_hash('sha512') }}"
+    password: "{{ vault_user_password | password_hash('sha512', ((vault_user_name ~ inventory_hostname) | hash('sha256'))[:16]) }}"
     shell: "{{ hardening_user_shell }}"
     create_home: true
     groups: wheel

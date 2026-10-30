@@ -1,0 +1,81 @@
+# SPDX-License-Identifier: MIT
+---
+- name: Verify the hardened host
+  hosts: all
+  become: true
+  gather_facts: true
+  vars_files:
+    - user.yml
+  vars:
+    ssh_port: 2204
+    hardening_hostname: ci-hardened
+  tasks:
+    - name: Gather service facts
+      ansible.builtin.service_facts:
+
+    - name: Hardening services are running
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.services[item].state == 'running'
+          - ansible_facts.services[item].status == 'enabled'
+        quiet: true
+      loop:
+        - firewalld.service
+        - fail2ban.service
+        - chronyd.service
+        - sshd.service
+
+    - name: The dnf-automatic timer is enabled
+      ansible.builtin.systemd_service:
+        name: dnf-automatic.timer
+        enabled: true
+      check_mode: true
+      register: verify_dnf_timer
+
+    - name: Read the firewalld default zone
+      ansible.builtin.command: firewall-cmd --get-default-zone
+      register: verify_firewalld_zone
+      changed_when: false
+
+    - name: Read the open firewalld ports
+      ansible.builtin.command: firewall-cmd --list-ports
+      register: verify_firewalld_ports
+      changed_when: false
+
+    - name: Read SELinux port labels
+      ansible.builtin.command: semanage port -l
+      register: verify_seports
+      changed_when: false
+
+    - name: Read the effective sshd configuration
+      ansible.builtin.command: sshd -T
+      register: verify_sshd
+      changed_when: false
+
+    - name: Read fail2ban sshd jail
+      ansible.builtin.command: fail2ban-client get sshd banip
+      register: verify_fail2ban
+      changed_when: false
+
+    - name: Read the admin user's groups
+      ansible.builtin.command: id -nG {{ vault_user_name }}
+      register: verify_groups
+      changed_when: false
+
+    - name: Everything is hardened as configured
+      ansible.builtin.assert:
+        that:
+          - not verify_dnf_timer.changed
+          - verify_firewalld_zone.stdout == 'public'
+          - "'80/tcp' in verify_firewalld_ports.stdout.split()"
+          - "'443/tcp' in verify_firewalld_ports.stdout.split()"
+          - "(ssh_port | string) ~ '/tcp' in verify_firewalld_ports.stdout.split()"
+          - verify_seports.stdout is search('^ssh_port_t\\s+tcp\\s+.*\\b' ~ ssh_port ~ '\\b', multiline=True)
+          - "'port ' ~ ssh_port in verify_sshd.stdout_lines"
+          - "'permitrootlogin no' in verify_sshd.stdout_lines"
+          - "'passwordauthentication no' in verify_sshd.stdout_lines"
+          - "'pubkeyauthentication yes' in verify_sshd.stdout_lines"
+          - "'kbdinteractiveauthentication no' in verify_sshd.stdout_lines"
+          - verify_fail2ban.rc == 0
+          - "'wheel' in verify_groups.stdout.split()"
+          - ansible_facts.hostname == hardening_hostname

@@ -1,0 +1,120 @@
+---
+name: Role CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+env:
+  ANSIBLE_FORCE_COLOR: "1"
+  PY_COLORS: "1"
+  ANSIBLE_HOST_KEY_CHECKING: "False"
+  ROLE_NAME: spoljarevic.rhel-based-hardening
+  CI_ADMIN_USER: ciadmin
+  CI_ADMIN_PASSWORD: ci-Hardening-Passw0rd
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  lint:
+    name: Lint (yamllint + ansible-lint)
+    runs-on: codeberg-small
+    container:
+      image: node:20-bookworm
+    steps:
+      - uses: https://code.forgejo.org/actions/checkout@v4
+
+      - name: Install linters and collections
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq python3-venv >/dev/null
+          python3 -m venv /opt/ansible
+          /opt/ansible/bin/pip install -q ansible-lint yamllint
+          /opt/ansible/bin/ansible-galaxy collection install -r requirements.yml
+          echo "/opt/ansible/bin" >> "$GITHUB_PATH"
+
+      - name: Make the role available under its Galaxy name
+        run: |
+          mkdir -p ~/.ansible/roles
+          ln -s "$PWD" ~/.ansible/roles/"$ROLE_NAME"
+          printf -- '---\nvault_user_name: %s\nvault_user_password: %s\n' "$CI_ADMIN_USER" "$CI_ADMIN_PASSWORD" > tests/user.yml
+
+      - name: yamllint
+        run: yamllint --strict .
+
+      - name: ansible-lint
+        if: success() || failure()
+        run: ansible-lint
+
+  # Apply the role to a real Rocky Linux 9 VM (systemd, SELinux enforcing,
+  # firewalld, sshd), verify the result, check that password and port 22
+  # logins are refused, then re-run the role as the new admin user over the
+  # hardened SSH port and require zero changes.
+  rocky9:
+    name: Rocky Linux 9 VM
+    needs: lint
+    runs-on: codeberg-medium
+    timeout-minutes: 120
+    container:
+      image: node:20-bookworm
+    steps:
+      - uses: https://code.forgejo.org/actions/checkout@v4
+
+      - name: Install QEMU and Ansible
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends \
+            qemu-system-x86 qemu-utils genisoimage openssh-client python3-venv >/dev/null
+          python3 -m venv /opt/ansible
+          /opt/ansible/bin/pip install -q ansible-core passlib
+          /opt/ansible/bin/ansible-galaxy collection install -r requirements.yml
+          echo "/opt/ansible/bin" >> "$GITHUB_PATH"
+
+      - name: Prepare SSH key, test vars and role path
+        run: |
+          mkdir -p ~/.ssh ~/.ansible/roles
+          ssh-keygen -q -t ed25519 -N '' -f ~/.ssh/id_ed25519
+          ln -s "$PWD" ~/.ansible/roles/"$ROLE_NAME"
+          printf -- '---\nvault_user_name: %s\nvault_user_password: %s\n' "$CI_ADMIN_USER" "$CI_ADMIN_PASSWORD" > tests/user.yml
+          printf 'vm ansible_host=127.0.0.1 ansible_port=2222 ansible_user=rocky\n' > /tmp/inventory-initial
+          printf 'vm ansible_host=127.0.0.1 ansible_port=2204 ansible_user=%s ansible_become_password=%s\n' \
+            "$CI_ADMIN_USER" "$CI_ADMIN_PASSWORD" > /tmp/inventory-hardened
+
+      - name: Boot Rocky Linux 9 VM
+        run: bash .forgejo/scripts/start-rocky-vm.sh
+
+      - name: Apply the role (fresh server, default SSH port)
+        run: ansible-playbook -i /tmp/inventory-initial tests/test.yml
+
+      - name: Verify the hardened server
+        run: ansible-playbook -i /tmp/inventory-hardened tests/verify.yml
+
+      - name: Password logins and port 22 are refused
+        run: |
+          ssh_opts=(-o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null)
+          out=$(ssh "${ssh_opts[@]}" -p 2204 -o PubkeyAuthentication=no \
+                -o PreferredAuthentications=password,keyboard-interactive \
+                "$CI_ADMIN_USER"@127.0.0.1 true 2>&1) && { echo "password login was accepted"; exit 1; }
+          echo "$out"
+          grep -q 'Permission denied (' <<< "$out"
+          if grep -qE 'Permission denied \(.*(password|keyboard-interactive)' <<< "$out"; then
+            echo "sshd still offers password authentication"
+            exit 1
+          fi
+          if ssh "${ssh_opts[@]}" -p 2222 rocky@127.0.0.1 true; then
+            echo "sshd still answers on port 22"
+            exit 1
+          fi
+
+      - name: Re-run as the hardened admin user (must be idempotent)
+        run: |
+          ansible-playbook -i /tmp/inventory-hardened tests/test.yml | tee /tmp/second-run.log
+          sed -i 's/\x1b\[[0-9;]*m//g' /tmp/second-run.log
+          grep -qE 'vm +: ok=[0-9]+ +changed=0 +unreachable=0 +failed=0' /tmp/second-run.log
+
+      - name: VM serial log
+        if: failure()
+        run: tail -100 /tmp/rocky-vm/serial.log || true
