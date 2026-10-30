@@ -56,10 +56,13 @@ jobs:
   rocky9:
     name: Rocky Linux 9 VM
     needs: lint
-    runs-on: codeberg-medium
+    # Runs on the self-hosted runner (Codeberg's hosted runners are limited
+    # to 10 min / 8 GB). Pull requests from forks never reach that machine.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: heavy-duty
     timeout-minutes: 120
     container:
-      image: node:20-bookworm
+      image: docker.io/library/node:20-bookworm
     steps:
       - uses: https://code.forgejo.org/actions/checkout@v4
 
