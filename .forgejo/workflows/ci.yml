@@ -21,7 +21,7 @@ defaults:
 jobs:
   lint:
     name: Lint (yamllint + ansible-lint)
-    runs-on: codeberg-small
+    runs-on: small
     container:
       image: node:20-bookworm
     steps:
